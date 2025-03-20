@@ -13,10 +13,12 @@ const GameBoard: React.FC = () => {
     x: 0,
     y: 0,
     isFlying: false,
-    startTime: 0
+    startTime: 0,
+    hasReachedCenter: false
   });
   const [countdown, setCountdown] = useState<number | null>(null);
-  const [isInitialized, setIsInitialized] = useState(false);
+  const animationFrameRef = useRef<number>();
+  const isInitializedRef = useRef(false);
 
   // Constants for the game graphics
   const PLANE_SIZE = 80;
@@ -25,6 +27,14 @@ const GameBoard: React.FC = () => {
   const BG_END_COLOR = '#4B0082';
   const GRID_COLOR = 'rgba(255, 255, 255, 0.1)';
   const GRID_SIZE = 30; // Size of grid cells
+
+  // Add explosion animation state
+  const explosionRef = useRef({
+    isExploding: false,
+    startTime: 0,
+    x: 0,
+    y: 0
+  });
 
   // Draw the game on canvas
   const drawGame = (canvas: HTMLCanvasElement, multiplier: number, gameState: string) => {
@@ -45,17 +55,17 @@ const GameBoard: React.FC = () => {
       const { x, y } = planeRef.current;
 
       // Draw trail
-      drawTrail(ctx, x, y, width, height);
+      drawTrail(ctx, x, y, width * 0.1, height * 0.8);
 
       if (gameState === 'flying') {
         drawPlane(ctx, x, y);
       } else {
-        drawExplosion(ctx, x, y);
+        drawExplosion(ctx, x, y, 0);
       }
     } else {
       // Draw plane at starting position
       const startX = width * 0.1;
-      const startY = height * 0.9;
+      const startY = height * 0.8;
       drawPlane(ctx, startX, startY);
     }
   };
@@ -164,45 +174,72 @@ const GameBoard: React.FC = () => {
 
   // Draw the plane at the specified position
   const drawPlane = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
-    const size = 40; // Smaller, simpler plane
-
-    // Save the current context state
     ctx.save();
-
-    // Translate to the position
     ctx.translate(x, y);
 
-    // Rotate slightly based on vertical oscillation for a more dynamic feel
-    const tiltAngle = planeRef.current.isFlying ? 0.01 : 0;
-    ctx.rotate(tiltAngle);
-
-    // Draw a bright, simple plane
-    ctx.fillStyle = '#FFFFFF';
+    // Add glow effect
+    ctx.shadowColor = '#FF2D55';
+    ctx.shadowBlur = 20;
     ctx.strokeStyle = '#FF2D55';
-    ctx.lineWidth = 4;
-    
-    // Draw plane body (simple triangle)
+    ctx.lineWidth = 2;
+
+    // Main body
     ctx.beginPath();
-    ctx.moveTo(20, 0); // Nose
-    ctx.lineTo(-20, 15); // Left wing
-    ctx.lineTo(-10, 0); // Body
-    ctx.lineTo(-20, -15); // Right wing
+    ctx.fillStyle = '#FFFFFF';
+    ctx.moveTo(25, 0);  // Nose of the plane
+    ctx.lineTo(15, -8); // Top of cockpit
+    ctx.lineTo(-20, -8); // Top of body
+    ctx.lineTo(-25, -15); // Tail top
+    ctx.lineTo(-30, -8); // Back of tail
+    ctx.lineTo(-20, -8); // Connect back to body
+    ctx.lineTo(-15, 0);  // Bottom of body
+    ctx.lineTo(-20, 8);  // Bottom curve
+    ctx.lineTo(-30, 8);  // Bottom tail
+    ctx.lineTo(-25, 15); // Tail bottom
+    ctx.lineTo(-20, 8);  // Back to body
+    ctx.lineTo(15, 8);   // Bottom of cockpit
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-    
-    // Add engine flames
+
+    // Wings
     ctx.beginPath();
-    ctx.fillStyle = '#FFDD00';
-    ctx.arc(-15, 0, 8, 0, Math.PI * 2);
+    ctx.moveTo(5, -5);   // Wing start
+    ctx.lineTo(-5, -25); // Wing tip
+    ctx.lineTo(-15, -5); // Wing back
+    ctx.closePath();
     ctx.fill();
-    
-    // Add glow effect
-    ctx.shadowColor = '#FF2D55';
-    ctx.shadowBlur = 15;
     ctx.stroke();
 
-    // Restore the context
+    // Bottom wing
+    ctx.beginPath();
+    ctx.moveTo(5, 5);    // Wing start
+    ctx.lineTo(-5, 25);  // Wing tip
+    ctx.lineTo(-15, 5);  // Wing back
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Cockpit window
+    ctx.beginPath();
+    ctx.fillStyle = '#88CCFF';
+    ctx.moveTo(15, -4);
+    ctx.lineTo(5, -4);
+    ctx.lineTo(5, 4);
+    ctx.lineTo(15, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Engine glow
+    const gradient = ctx.createRadialGradient(-25, 0, 0, -25, 0, 10);
+    gradient.addColorStop(0, 'rgba(255, 45, 85, 0.6)');
+    gradient.addColorStop(1, 'rgba(255, 45, 85, 0)');
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(-25, 0, 10, 0, Math.PI * 2);
+    ctx.fill();
+
     ctx.restore();
   };
 
@@ -234,70 +271,91 @@ const GameBoard: React.FC = () => {
   // Update the animate function
   const animate = () => {
     if (!canvasRef.current) return;
-
     const canvas = canvasRef.current;
-    const width = canvas.width;
-    const height = canvas.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-    // Define fixed positions
-    const startX = width * 0.1;
-    const startY = height * 0.9;
-    const targetX = width * 0.7;
-    const targetY = height * 0.5;
+    // Clear and draw background
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawBackground(ctx, canvas.width, canvas.height);
 
-    // Update plane position based on game state
+    // Define positions
+    const startX = canvas.width * 0.1;
+    const startY = canvas.height * 0.8;
+    const centerX = canvas.width * 0.5;
+    const centerY = canvas.height * 0.5;
+
     if (gameState === 'flying') {
+      // Start new flight
       if (!planeRef.current.isFlying) {
-        // Initialize flight
+        console.log('Starting new flight');
         planeRef.current = {
           x: startX,
           y: startY,
           isFlying: true,
-          startTime: Date.now()
+          startTime: Date.now(),
+          hasReachedCenter: false
         };
       }
 
-      // Calculate progress
       const elapsed = Date.now() - planeRef.current.startTime;
-      const duration = 1500; // 1.5 seconds for initial flight
+      const duration = 3000; // 3 seconds to reach center
       const progress = Math.min(elapsed / duration, 1);
 
-      // Calculate curved path
-      const controlX = width * 0.4;
-      const controlY = height * 0.7;
-      const t = progress;
+      if (!planeRef.current.hasReachedCenter) {
+        // Move to center with easing
+        const eased = 1 - Math.pow(1 - progress, 3);
+        planeRef.current.x = startX + (centerX - startX) * eased;
+        planeRef.current.y = startY + (centerY - startY) * eased;
 
-      if (progress < 1) {
-        // Quadratic bezier curve for smooth path
-        const oneMinusT = 1 - t;
-        planeRef.current.x = oneMinusT * oneMinusT * startX + 
-                            2 * oneMinusT * t * controlX + 
-                            t * t * targetX;
-        planeRef.current.y = oneMinusT * oneMinusT * startY + 
-                            2 * oneMinusT * t * controlY + 
-                            t * t * targetY;
+        if (progress >= 1) {
+          planeRef.current.hasReachedCenter = true;
+        }
       } else {
-        // At target position, add oscillation and upward movement
-        planeRef.current.x = targetX;
-        const oscillation = Math.sin(Date.now() * 0.003) * 10;
-        const heightOffset = (currentMultiplier - 1) * 25;
-        planeRef.current.y = targetY - heightOffset + oscillation;
+        // Modified oscillation at center
+        const centerX = canvas.width * 0.5;
+        const centerY = canvas.height * 0.5;
+        
+        // Keep X position fixed at center
+        planeRef.current.x = centerX;
+        
+        // Constrained oscillation
+        const oscillationAmplitude = 30; // Maximum pixels to move up/down
+        const oscillation = Math.sin(Date.now() * 0.004) * oscillationAmplitude;
+        const maxUpwardOffset = canvas.height * 0.3; // Maximum upward movement (30% of canvas)
+        const heightOffset = Math.min((currentMultiplier - 1) * 40, maxUpwardOffset);
+        
+        // Ensure plane stays within canvas bounds
+        const newY = centerY - heightOffset + oscillation;
+        planeRef.current.y = Math.max(50, Math.min(newY, canvas.height - 50));
+      }
+
+      // Draw trail and plane
+      drawTrail(ctx, planeRef.current.x, planeRef.current.y, startX, startY);
+      drawPlane(ctx, planeRef.current.x, planeRef.current.y);
+    } else if (gameState === 'crashed' && !explosionRef.current.isExploding) {
+      // Start explosion animation
+      explosionRef.current = {
+        isExploding: true,
+        startTime: Date.now(),
+        x: planeRef.current.x,
+        y: planeRef.current.y
+      };
+      drawExplosion(ctx, planeRef.current.x, planeRef.current.y, 0);
+    } else if (gameState === 'crashed' && explosionRef.current.isExploding) {
+      // Continue explosion animation
+      const explosionProgress = (Date.now() - explosionRef.current.startTime) / 1000; // 1 second animation
+      if (explosionProgress < 1) {
+        drawExplosion(ctx, explosionRef.current.x, explosionRef.current.y, explosionProgress);
       }
     } else {
-      // Reset to starting position
-      planeRef.current = {
-        x: startX,
-        y: startY,
-        isFlying: false,
-        startTime: 0
-      };
+      // Reset states
+      explosionRef.current.isExploding = false;
+      drawPlane(ctx, startX, startY);
     }
 
-    // Draw the current frame
-    drawGame(canvas, currentMultiplier, gameState);
-
-    // Request next frame
-    requestAnimationFrame(animate);
+    // Continue animation
+    animationFrameRef.current = requestAnimationFrame(animate);
   };
 
   // Handle window resize
@@ -413,23 +471,28 @@ const GameBoard: React.FC = () => {
 
   // Modify the initialization effect
   useEffect(() => {
-    if (!isInitialized && canvasRef.current) {
-      console.log("Initializing game after refresh");
-      
-      // Reset plane animation state
-      resetPlaneAnimation();
-      
-      // Force a redraw with the current state
-      drawGame(canvasRef.current, currentMultiplier, gameState);
-      setIsInitialized(true);
-      
-      if (gameState === 'flying') {
-        // If we're already in flying state, start the animation
-        planeRef.current.isFlying = true;
-        planeRef.current.startTime = Date.now();
+    if (!isInitializedRef.current) {
+      console.log('Initializing game board');
+      if (canvasRef.current) {
+        const canvas = canvasRef.current;
+        const startX = canvas.width * 0.1;
+        const startY = canvas.height * 0.8;
+        
+        // Set initial position
+        planeRef.current = {
+          x: startX,
+          y: startY,
+          isFlying: false,
+          startTime: 0,
+          hasReachedCenter: false
+        };
+
+        // Start animation
+        animationFrameRef.current = requestAnimationFrame(animate);
       }
+      isInitializedRef.current = true;
     }
-  }, [isInitialized, gameState, currentMultiplier]);
+  }, []);
 
   // Modify the resetPlaneAnimation function to be simpler
   const resetPlaneAnimation = () => {
@@ -439,9 +502,10 @@ const GameBoard: React.FC = () => {
       
       planeRef.current = {
         x: width * 0.1,
-        y: height * 0.9,
+        y: height * 0.8,
         isFlying: false,
-        startTime: 0
+        startTime: 0,
+        hasReachedCenter: false
       };
     }
   };
@@ -480,25 +544,40 @@ const GameBoard: React.FC = () => {
   // Add this to your component, near the debug state
   const [forceShowPlane, setForceShowPlane] = useState(false);
 
-  // Add a separate function for explosion effect
-  const drawExplosion = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
+  // Add explosion drawing function
+  const drawExplosion = (ctx: CanvasRenderingContext2D, x: number, y: number, progress: number) => {
+    ctx.save();
+    
+    // Explosion size grows with progress
+    const size = 50 + (progress * 100);
+    const opacity = 1 - progress;
+    
+    // Outer glow
     ctx.beginPath();
-    ctx.arc(x, y, 40, 0, Math.PI * 2);
-    ctx.fillStyle = '#FF3333';
+    const gradient = ctx.createRadialGradient(x, y, 0, x, y, size);
+    gradient.addColorStop(0, `rgba(255, 69, 0, ${opacity})`);
+    gradient.addColorStop(0.5, `rgba(255, 165, 0, ${opacity * 0.5})`);
+    gradient.addColorStop(1, 'rgba(255, 165, 0, 0)');
+    ctx.fillStyle = gradient;
+    ctx.arc(x, y, size, 0, Math.PI * 2);
     ctx.fill();
 
-    for (let i = 0; i < 12; i++) {
-      const angle = (i * Math.PI * 2) / 12;
+    // Particles
+    const particleCount = 12;
+    const angleStep = (Math.PI * 2) / particleCount;
+    
+    ctx.fillStyle = `rgba(255, 69, 0, ${opacity})`;
+    for (let i = 0; i < particleCount; i++) {
+      const angle = i * angleStep;
+      const particleX = x + Math.cos(angle) * size * 0.8 * progress;
+      const particleY = y + Math.sin(angle) * size * 0.8 * progress;
+      
       ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(
-        x + Math.cos(angle) * 80,
-        y + Math.sin(angle) * 80
-      );
-      ctx.strokeStyle = '#FFDD00';
-      ctx.lineWidth = 8;
-      ctx.stroke();
+      ctx.arc(particleX, particleY, 5, 0, Math.PI * 2);
+      ctx.fill();
     }
+
+    ctx.restore();
   };
 
   // Add an effect to update the canvas when multiplier changes
@@ -510,52 +589,71 @@ const GameBoard: React.FC = () => {
 
   // Update the animation effect
   useEffect(() => {
-    if (!canvasRef.current) return;
+    // Start animation if not already running
+    if (!animationFrameRef.current) {
+      console.log('Starting animation');
+      animationFrameRef.current = requestAnimationFrame(animate);
+    }
 
-    // Start animation loop
-    const animationId = requestAnimationFrame(animate);
+    // Reset plane position on state change
+    if (gameState === 'waiting' && canvasRef.current) {
+      console.log('Resetting plane position');
+      const canvas = canvasRef.current;
+      planeRef.current = {
+        x: canvas.width * 0.1,
+        y: canvas.height * 0.8,
+        isFlying: false,
+        startTime: 0,
+        hasReachedCenter: false
+      };
+    }
 
     // Cleanup
     return () => {
-      cancelAnimationFrame(animationId);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = undefined;
+      }
     };
-  }, [gameState]); // Only depend on gameState
+  }, [gameState, currentMultiplier]);
 
-  // Add this function before drawGame
-  const drawTrail = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number) => {
-    // Draw the trail from start position to current plane position
+  // Update the drawTrail function for better visibility
+  const drawTrail = (ctx: CanvasRenderingContext2D, x: number, y: number, startX: number, startY: number) => {
     ctx.beginPath();
-    ctx.moveTo(width * 0.1, height * 0.9); // Start position
-    
-    // Use the same control point as the flight path
-    const controlX = width * 0.4;
-    const controlY = height * 0.8;
-    
-    ctx.quadraticCurveTo(
-      controlX, controlY, // Control point
-      x, y // Current plane position
-    );
-    
-    // Style the trail
+    ctx.moveTo(startX, startY);
+    ctx.lineTo(x, y);
     ctx.strokeStyle = '#FF2D55';
-    ctx.lineWidth = 10;
-    
-    // Add glow effect
+    ctx.lineWidth = 6; // Thicker trail
     ctx.shadowColor = '#FF2D55';
-    ctx.shadowBlur = 20;
+    ctx.shadowBlur = 20; // More glow
     ctx.stroke();
-    
-    // Reset shadow
     ctx.shadowBlur = 0;
   };
 
+  // Add effect to reset plane position when game state changes
+  useEffect(() => {
+    if (gameState === 'waiting' || gameState === 'crashed') {
+      planeRef.current = {
+        x: canvasRef.current?.width ? canvasRef.current.width * 0.1 : 0,
+        y: canvasRef.current?.height ? canvasRef.current.height * 0.8 : 0,
+        isFlying: false,
+        startTime: 0,
+        hasReachedCenter: false
+      };
+    }
+  }, [gameState]);
+
   return (
-    <div className={getContainerClass()} style={{ height: '380px' }}>
+    <div className="relative rounded-lg overflow-hidden" style={{ height: '380px' }}>
       <canvas
         ref={canvasRef}
         className="w-full h-full block"
       />
-      <MultiplierDisplay />
+      <div className="absolute top-0 right-0 p-6">
+        <div className="w-40 h-20">
+          <MultiplierDisplay />
+        </div>
+      </div>
       
       {showDebug && (
         <div className="absolute top-2 left-2 bg-black/70 text-white p-2 text-xs rounded">

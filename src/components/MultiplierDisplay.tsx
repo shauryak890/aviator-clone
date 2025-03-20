@@ -13,26 +13,40 @@ const MultiplierDisplay: React.FC = () => {
     const formattedMultiplier = currentMultiplier.toFixed(2) + 'x';
     
     // Set text properties
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
     
     if (gameState === 'flying') {
       ctx.fillStyle = '#FFFFFF';
-      ctx.font = 'bold 64px Arial';
-      // Add glow effect
+      ctx.font = 'bold 48px Arial';
+      // Add stronger glow effect
       ctx.shadowColor = '#FF2D55';
       ctx.shadowBlur = Math.min(currentMultiplier * 5, 30);
+      ctx.shadowOffsetX = 2;
+      ctx.shadowOffsetY = 2;
     } else if (gameState === 'crashed') {
       ctx.fillStyle = '#FF4444';
-      ctx.font = 'bold 64px Arial';
+      ctx.font = 'bold 48px Arial';
+      ctx.shadowColor = '#FF0000';
+      ctx.shadowBlur = 15;
     } else {
       ctx.fillStyle = '#AAAAAA';
-      ctx.font = 'bold 48px Arial';
+      ctx.font = 'bold 42px Arial';
     }
 
-    // Draw multiplier text
-    ctx.fillText(formattedMultiplier, width * 0.5, height * 0.5);
+    // Position in top-right corner with more padding
+    const padding = 30;
+    
+    // Draw text with outline for better visibility
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 3;
+    ctx.strokeText(formattedMultiplier, width - padding, padding);
+    ctx.fillText(formattedMultiplier, width - padding, padding);
+    
+    // Reset shadow effects
     ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
   };
 
   // Update canvas size
@@ -61,6 +75,7 @@ const MultiplierDisplay: React.FC = () => {
       <canvas
         ref={canvasRef}
         className="w-full h-full block"
+        style={{ zIndex: 10 }}
       />
     </div>
   );
